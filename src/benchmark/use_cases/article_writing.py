@@ -81,21 +81,38 @@ class ArticleWritingUseCase(BaseUseCase):
                 }
             ]
             
-            # Create a token usage tracker
-            token_usage_tracker = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            llm_config = {
+                "config_list": config_list,
+            }
             
-            print("Creating agent...")
+            print("Creating agents...")
             
-            # Create a single assistant agent
-            article_writer = autogen.AssistantAgent(
-                name="ArticleWriter",
-                llm_config={
-                    "config_list": config_list,
-                },
-                system_message=f"You are an expert article writer specializing in technical topics. You will write a comprehensive, well-structured article about '{topic}'. Include relevant Python code examples where appropriate. The article should be engaging, informative, and suitable for a technical audience. Structure the article with clear sections including an introduction, main content, and conclusion."
+            # Create multiple agents for the article writing team
+            supervisor = autogen.AssistantAgent(
+                name="Supervisor",
+                llm_config=llm_config,
+                system_message="You are the Supervisor, an editor overseeing an article writing task. Your role is to coordinate the team, provide guidance, and ensure the final article is cohesive and high-quality."
             )
             
-            # Create a user proxy agent
+            researcher = autogen.AssistantAgent(
+                name="Researcher",
+                llm_config=llm_config,
+                system_message="You are a Researcher with expertise in gathering accurate and relevant information on technical topics. Provide comprehensive research findings that can be used in the article."
+            )
+            
+            coder = autogen.AssistantAgent(
+                name="Coder",
+                llm_config=llm_config,
+                system_message="You are a Coder with expertise in Python. Provide relevant, well-commented code examples that illustrate key concepts related to the article topic."
+            )
+            
+            writer = autogen.AssistantAgent(
+                name="Writer",
+                llm_config=llm_config,
+                system_message="You are a Writer specializing in technical content. Create well-structured, engaging articles that incorporate research findings and code examples into a cohesive narrative."
+            )
+            
+            # Create a user proxy agent to facilitate the workflow
             user_proxy = autogen.UserProxyAgent(
                 name="User",
                 human_input_mode="NEVER",
@@ -104,47 +121,87 @@ class ArticleWritingUseCase(BaseUseCase):
             )
             
             # Define the workflow
-            def write_article():
+            def article_team_workflow():
                 try:
                     print("Starting article writing workflow...")
                     
-                    # User initiates the task with a detailed prompt
-                    prompt = f"Write a comprehensive article about '{topic}'. The article should: 1. Begin with an engaging introduction that explains the significance of {topic}. 2. Include multiple sections covering different aspects of the topic. 3. Provide real-world examples and applications. 4. Include at least one Python code example that demonstrates a relevant concept. 5. End with a conclusion summarizing the key points. Make the article informative, well-structured, and engaging for a technical audience."
-                    
-                    print("Sending prompt to article writer...")
+                    # Step 1: Supervisor plans the task
+                    print("Step 1: Supervisor planning the task...")
                     user_proxy.initiate_chat(
-                        article_writer,
-                        message=prompt
+                        supervisor,
+                        message=f"Write an article on: {topic}. Plan the steps for your team."
+                    )
+                    plan = supervisor.chat_messages[user_proxy][-1]["content"]
+                    print(f"Plan created. Length: {len(plan)} characters")
+                    
+                    # Step 2: Researcher gathers information
+                    print("Step 2: Researcher gathering information...")
+                    user_proxy.initiate_chat(
+                        researcher,
+                        message=f"The supervisor said: {plan}\nResearch the topic and provide key points."
+                    )
+                    research = researcher.chat_messages[user_proxy][-1]["content"]
+                    print(f"Research completed. Length: {len(research)} characters")
+                    
+                    # Step 3: Coder provides a code example
+                    print("Step 3: Coder creating code example...")
+                    user_proxy.initiate_chat(
+                        coder,
+                        message=f"The topic is: {topic}\nThe researcher found: {research}\nProvide a Python code example relevant to this topic."
+                    )
+                    code_example = coder.chat_messages[user_proxy][-1]["content"]
+                    print(f"Code example created. Length: {len(code_example)} characters")
+                    
+                    # Step 4: Writer drafts the article
+                    print("Step 4: Writer drafting the article...")
+                    user_proxy.initiate_chat(
+                        writer,
+                        message=f"Write an article on '{topic}' using the info and code below.\nInformation: {research}\nCode:\n{code_example}\n"
+                    )
+                    draft = writer.chat_messages[user_proxy][-1]["content"]
+                    print(f"Draft created. Length: {len(draft)} characters")
+                    
+                    # Step 5: Supervisor reviews and finalizes
+                    print("Step 5: Supervisor reviewing and finalizing...")
+                    user_proxy.initiate_chat(
+                        supervisor,
+                        message=f"Review and refine this draft if needed:\n{draft}"
+                    )
+                    final_article = supervisor.chat_messages[user_proxy][-1]["content"]
+                    print(f"Final article created. Length: {len(final_article)} characters")
+                    
+                    # Calculate token usage for all interactions
+                    prompt_tokens = (
+                        tracker.count_tokens(f"Write an article on: {topic}. Plan the steps for your team.") +
+                        tracker.count_tokens(f"The supervisor said: {plan}\nResearch the topic and provide key points.") +
+                        tracker.count_tokens(f"The topic is: {topic}\nThe researcher found: {research}\nProvide a Python code example relevant to this topic.") +
+                        tracker.count_tokens(f"Write an article on '{topic}' using the info and code below.\nInformation: {research}\nCode:\n{code_example}\n") +
+                        tracker.count_tokens(f"Review and refine this draft if needed:\n{draft}")
                     )
                     
-                    # Get the article from the assistant's response
-                    if article_writer.chat_messages[user_proxy]:
-                        final_article = article_writer.chat_messages[user_proxy][-1]["content"]
-                        print(f"Article generated. Length: {len(final_article)} characters")
-                        
-                        # Manually estimate token usage
-                        prompt_tokens = tracker.count_tokens(prompt)
-                        completion_tokens = tracker.count_tokens(final_article)
-                        
-                        # Update token usage
-                        tracker.update_token_usage(
-                            prompt_tokens=prompt_tokens,
-                            completion_tokens=completion_tokens
-                        )
-                        
-                        return final_article
-                    else:
-                        error_msg = "No response received from article writer"
-                        print(error_msg)
-                        return error_msg
+                    completion_tokens = (
+                        tracker.count_tokens(plan) +
+                        tracker.count_tokens(research) +
+                        tracker.count_tokens(code_example) +
+                        tracker.count_tokens(draft) +
+                        tracker.count_tokens(final_article)
+                    )
+                    
+                    # Update token usage
+                    tracker.update_token_usage(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens
+                    )
+                    
+                    return final_article
                 
                 except Exception as e:
-                    error_msg = f"Error in article writing workflow: {str(e)}"
+                    error_msg = f"Error in article team workflow: {str(e)}"
                     print(error_msg)
                     return error_msg
             
             # Execute the workflow
-            final_article = write_article()
+            final_article = article_team_workflow()
             print("Article generation completed")
             
             # Stop the tracker and calculate metrics
