@@ -15,9 +15,9 @@ load_dotenv()
 # Create a DataFrame with the comparison data
 data = {
     'Framework': ['autogen', 'semantic_kernel', 'langchain', 'crewai'],
-    'Time (s)': [0.57, 88.09, 109.81, 94.30],
-    'Tokens': [0, 7721, 8270, 974],
-    'Cost ($)': [0.0000, 0.0486, 0.0554, 0.0094]
+    'Time (s)': [0.80, 88.09, 109.81, 94.30],
+    'Tokens': [8423, 7721, 8270, 974],
+    'Cost ($)': [0.0531, 0.0486, 0.0554, 0.0094]
 }
 
 df = pd.DataFrame(data)
